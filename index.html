@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Cardio Billing Reference</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>Cardio Billing Reference</h1>
+    <p class="disclaimer" id="disclaimer"></p>
+  </header>
+
+  <nav class="tabs" role="tablist" aria-label="Modes">
+    <button class="tab" role="tab" id="tab-ask" aria-controls="panel-ask" aria-selected="true" data-mode="ask">
+      Ask
+    </button>
+    <button class="tab" role="tab" id="tab-browse" aria-controls="panel-browse" aria-selected="false" data-mode="browse" tabindex="-1">
+      Browse
+    </button>
+    <button class="tab" role="tab" id="tab-sheets" aria-controls="panel-sheets" aria-selected="false" data-mode="sheets" tabindex="-1">
+      My Cheat Sheets
+    </button>
+  </nav>
+
+  <main>
+    <!-- ASK MODE -->
+    <section id="panel-ask" class="panel" role="tabpanel" aria-labelledby="tab-ask">
+      <form id="ask-form">
+        <label for="situation-input" class="field-label">Describe the billing situation</label>
+        <div class="input-row">
+          <textarea id="situation-input" rows="3"
+            placeholder="e.g. New admission from the ER at 11pm, or Day 2 of routine rounds, or Primary PCI with one stent"></textarea>
+          <button type="button" id="mic-btn" class="icon-btn" aria-label="Dictate situation" title="Dictate">🎤</button>
+        </div>
+
+        <details class="same-day-details">
+          <summary>Codes already billed today for this patient (optional)</summary>
+          <label for="already-billed-input" class="field-label sr-only">Already-billed codes</label>
+          <div class="input-row">
+            <input type="text" id="already-billed-input" placeholder="e.g. C602, C990" />
+            <button type="button" id="mic-btn-billed" class="icon-btn" aria-label="Dictate already-billed codes" title="Dictate">🎤</button>
+          </div>
+        </details>
+
+        <button type="submit" class="primary-btn">Get recommended code</button>
+      </form>
+
+      <div id="ask-result" class="result-area" aria-live="polite"></div>
+    </section>
+
+    <!-- BROWSE MODE -->
+    <section id="panel-browse" class="panel" role="tabpanel" aria-labelledby="tab-browse" hidden>
+      <label for="browse-search" class="field-label sr-only">Search codes</label>
+      <input type="search" id="browse-search" class="search-input" placeholder="Search codes, descriptions, notes…" />
+
+      <div id="browse-cats" class="cat-chip-row" role="tablist" aria-label="Categories"></div>
+
+      <div id="browse-list" class="code-list"></div>
+    </section>
+
+    <!-- MY CHEAT SHEETS MODE -->
+    <section id="panel-sheets" class="panel" role="tabpanel" aria-labelledby="tab-sheets" hidden>
+      <form id="upload-form">
+        <label for="sheet-cat-select" class="field-label">Category</label>
+        <select id="sheet-cat-select"></select>
+
+        <label for="sheet-file-input" class="field-label">File (PDF or photo)</label>
+        <input type="file" id="sheet-file-input" accept="application/pdf,image/*" required />
+
+        <button type="submit" class="primary-btn">Upload</button>
+      </form>
+
+      <div id="sheets-cats" class="cat-chip-row" role="tablist" aria-label="Categories"></div>
+
+      <div id="sheets-grid" class="sheets-grid"></div>
+    </section>
+  </main>
+
+  <!-- Full-screen file viewer -->
+  <div id="viewer-overlay" class="viewer-overlay" hidden role="dialog" aria-modal="true" aria-label="File viewer">
+    <button id="viewer-close" class="icon-btn viewer-close" aria-label="Close viewer">✕</button>
+    <div id="viewer-body" class="viewer-body"></div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
