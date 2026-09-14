@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cardio-billing-v5';
+const CACHE_NAME = 'cardio-billing-v6';
 const ASSETS = [
   './',
   './index.html',
@@ -32,7 +32,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' })
       .then((response) => {
         if (response.ok && response.type === 'basic') {
           const clone = response.clone();
