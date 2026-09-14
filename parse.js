@@ -96,6 +96,32 @@ function findDirectCodeMention(text) {
   return codeInfo(match[0]) ? match[0] : null;
 }
 
+// Generic "day N" extraction — handles any day number (not just 1-3), so
+// "day 4 of rounds", "day 12", etc. all resolve instead of only the first
+// few explicitly-named days.
+function extractDayNumber(text) {
+  const numeric = text.match(/\bday\s*(\d{1,3})\b/);
+  if (numeric) return parseInt(numeric[1], 10);
+  if (has(text, 'day one', '1st day', 'first hospital day', '1st hospital day')) return 1;
+  if (has(text, 'day two', '2nd day')) return 2;
+  if (has(text, 'day three', '3rd day')) return 3;
+  return null;
+}
+
+// Generic "week N" extraction, to pick the right MRP-visit tier
+// (C602 up to 5 weeks, C607 weeks 6-13, C609 after) when the description
+// mentions how far into the admission the patient is.
+function extractWeekNumber(text) {
+  const m = text.match(/\bweek\s*(\d{1,2})\b/) || text.match(/\b(\d{1,2})\s*weeks?\b/) || text.match(/\b(\d{1,2})\s*\/\s*52\b/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function routineMrpTierFor(weekNum) {
+  if (weekNum !== null && weekNum >= 6 && weekNum <= 13) return 'C607';
+  if (weekNum !== null && weekNum > 13) return 'C609';
+  return 'C602';
+}
+
 /**
  * Heuristic keyword parse of a free-text billing situation.
  * Returns { code, catKey, rationale: string[], assumptions: string[], addOns: {code, why}[], timeBlock }
@@ -124,9 +150,16 @@ function parseSituation(rawText) {
   const isCcuTransferIn = has(text, 'transfer to ccu', 'transferred to ccu', 'transfer to icu', 'transferred to icu', 'moved to ccu', 'moved to icu', 'admitted to ccu', 'admission to ccu', 'ccu admission', 'ccu transfer', 'sent to ccu', 'sent to icu', 'upgraded to ccu', 'upgraded to icu', 'needed ccu', 'needed icu');
   const isStemiPci = has(text, 'stemi', 'primary pci', 'pci', 'stent', 'angioplasty', 'cath lab', 'cardiac cath', 'coronary intervention', 'heart attack', 'balloon and stent', 'opened the artery', 'clot in the artery', 'coronary stenting', 'cardiac catheterization', 'diagnostic cath');
   const isDischarge = has(text, 'discharge', 'discharged', 'sending home', 'going home today', 'd/c', 'sent home');
-  const isDay1 = has(text, 'day 1', '1st day', 'day one', 'first day', '1st hospital day', 'first hospital day', 'day after admission', 'day following admission');
-  const isDay2 = has(text, 'day 2', '2nd day', 'day two', 'second day', 'two days after admission');
-  const isDay3 = has(text, 'day 3', '3rd day', 'day three', 'third day', 'three days after admission');
+  let dayNum = extractDayNumber(text);
+  if (dayNum === null) {
+    if (has(text, 'day after admission', 'day following admission')) dayNum = 1;
+    else if (has(text, 'two days after admission')) dayNum = 2;
+    else if (has(text, 'three days after admission')) dayNum = 3;
+  }
+  const isDay1 = dayNum === 1;
+  const isDay2 = dayNum === 2;
+  const isDayGE3 = dayNum !== null && dayNum >= 3;
+  const weekNum = extractWeekNumber(text);
   const isNewAdmission = has(text, 'new admission', 'admitted', 'admission', 'admitting', 'new consult', 'admit the patient', 'admitting the patient', 'took over as mrp', 'became mrp', 'brought in and admitted');
   const isConsult = has(text, 'consult', 'consultation', 'referred', 'referral', 'asked to see', 'requested a consult', 'seen in consultation');
   const isComprehensive = has(text, '75 min', '75-minute', '75 minute', 'comprehensive', 'over an hour', 'more than an hour', 'lengthy visit');
@@ -241,7 +274,7 @@ function parseSituation(rawText) {
     if (timeBlock.assumed) {
       assumptions.push('Couldn\'t confirm time of day from the description — assumed weekday daytime; adjust the premium if this was evening/night/weekend.');
     }
-  } else if (isNewAdmission && !isDay2 && !isDay3) {
+  } else if (isNewAdmission && !isDay2 && !isDayGE3) {
     const needsPremium = isViaEr || timeBlock.id !== 'day' || isCallback;
     if (isComprehensive) {
       code = 'A600/C600'; catKey = 'consults';
@@ -268,9 +301,15 @@ function parseSituation(rawText) {
     code = 'C122'; catKey = 'mrp';
     rationale.push('Day 1 of routine inpatient rounds as MRP → C122.');
     addOns.push({ code: 'E083/E084', why: 'MRP premium on the subsequent visit (E084 if weekend/holiday)' });
-  } else if (isDay2 || isDay3) {
+  } else if (isDay2) {
     code = 'C123'; catKey = 'mrp';
-    rationale.push('Routine inpatient rounds, day 2+ as MRP → C123 (requires a prior C122 on this admission).');
+    rationale.push('Day 2 of routine inpatient rounds as MRP → C123 (requires a prior C122 on this admission).');
+    addOns.push({ code: 'E083/E084', why: 'MRP premium on the subsequent visit (E084 if weekend/holiday)' });
+  } else if (isDayGE3) {
+    code = routineMrpTierFor(weekNum); catKey = 'mrp';
+    rationale.push(`Day ${dayNum} of routine inpatient rounds as MRP, past C122/C123 → routine MRP visit (${code}).`);
+    if (code === 'C607') assumptions.push('Assumed weeks 6–13 based on the week number mentioned — capped at 3/week.');
+    if (code === 'C609') assumptions.push('Assumed 13+ weeks based on the week number mentioned — capped at 6/month.');
     addOns.push({ code: 'E083/E084', why: 'MRP premium on the subsequent visit (E084 if weekend/holiday)' });
   } else if (isOutpatientChf) {
     code = 'A604/C604'; catKey = 'consults';
@@ -291,9 +330,10 @@ function parseSituation(rawText) {
     code = 'G521'; catKey = 'ccu';
     rationale.push('CCU/critical-care context → G521 (first ¼h) as the base critical-care code.');
     assumptions.push('Couldn\'t confirm this meets the "life-threatening" bar from the description — if this is a routine CCU round rather than acute critical care, G400/G401 per-diem may fit better.');
-  } else if (has(text, 'routine visit', 'routine follow-up', 'follow up', 'subsequent visit', 'seeing on the floor', 'rounding')) {
-    code = 'C602'; catKey = 'mrp';
-    rationale.push('Routine MRP subsequent visit described → C602 (up to 5 weeks; C607 weeks 6–13, C609 after).');
+  } else if (has(text, 'routine visit', 'routine follow-up', 'follow up', 'subsequent visit', 'seeing on the floor', 'rounding', 'round', 'rounds', 'ward round', 'ward rounds', 'daily round', 'mrp visit', 'mrp follow up', 'mrp rounds')) {
+    code = routineMrpTierFor(weekNum); catKey = 'mrp';
+    const tierLabel = code === 'C602' ? 'up to 5 weeks' : code === 'C607' ? 'weeks 6–13' : '13+ weeks';
+    rationale.push(`Routine MRP subsequent visit described → ${code} (${tierLabel}).`);
     addOns.push({ code: 'E083/E084', why: 'MRP visit premium (E084 if weekend/holiday)' });
   }
 
