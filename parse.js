@@ -10,16 +10,51 @@ function has(text, ...words) {
   return words.some((w) => text.includes(w));
 }
 
+// Spelled-out numbers, common dictation mis-transcriptions, and loose
+// ordinal spellings all get folded down to a consistent digit form so the
+// rest of the parser only has to deal with one spelling of each concept.
+const WORD_NUMBERS = {
+  one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7',
+  eight: '8', nine: '9', ten: '10', eleven: '11', twelve: '12',
+};
+const ORDINAL_FIXES = [
+  [/\b(1st|first)\b/gi, '1st'],
+  [/\b(2nd|2ns|2ed|two nd|second)\b/gi, '2nd'],
+  [/\b(3rd|3ed|third)\b/gi, '3rd'],
+];
+
+function normalizeText(raw) {
+  let text = (raw || '').toLowerCase().trim();
+  // collapse stray punctuation dictation sometimes inserts ("re-assess." -> "re-assess")
+  text = text.replace(/[.,;!?]+/g, ' ').replace(/\s+/g, ' ');
+  for (const [pattern, replacement] of ORDINAL_FIXES) {
+    text = text.replace(pattern, replacement);
+  }
+  // "seven pm" / "eleven at night" -> "7pm" / "11 at night" so time parsing below can find them
+  text = text.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(am|pm)\b/gi,
+    (_, w, ap) => `${WORD_NUMBERS[w.toLowerCase()]}${ap}`);
+  text = text.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+hundred\s+(hours?|hrs?)\b/gi,
+    (_, w) => `${WORD_NUMBERS[w.toLowerCase()]}00`);
+  text = text.replace(/\bmidnight\b/gi, '0000');
+  text = text.replace(/\bnoon\b/gi, '1200');
+  return text;
+}
+
+function has(text, ...words) {
+  return words.some((w) => text.includes(w));
+}
+
 function detectTimeBlock(text) {
-  if (has(text, 'night', 'overnight', 'middle of the night', '3am', '2am', '1am', '4am', '12am', 'after midnight', 'midnight')) {
+  if (has(text, 'night', 'overnight', 'middle of the night', 'wee hours', 'small hours', 'graveyard', '3am', '2am', '1am', '4am', '5am', '12am', '0000', 'after midnight', 'midnight', 'early morning', 'before dawn')) {
     return { id: 'night', assumed: false };
   }
-  if (has(text, 'weekend', 'saturday', 'sunday', 'holiday', 'stat')) {
+  if (has(text, 'weekend', 'saturday', 'sunday', 'holiday', 'stat', 'long weekend')) {
     return { id: 'weekend', assumed: false };
   }
-  if (has(text, 'evening', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', 'after clinic', 'after hours', 'after-hours')) {
+  if (has(text, 'evening', 'tonight', 'this evening', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', 'after clinic', 'after hours', 'after-hours', 'end of the day', 'end of day')) {
     return { id: 'eve', assumed: false };
   }
+  // Military 4-digit time (1900, 0700) — digits only, no separator.
   const militaryMatch = text.match(/\b([01]\d|2[0-3])([0-5]\d)\b/);
   if (militaryMatch) {
     const h24 = parseInt(militaryMatch[1], 10);
@@ -27,16 +62,38 @@ function detectTimeBlock(text) {
     if (h24 >= 17) return { id: 'eve', assumed: false };
     return { id: 'day', assumed: false };
   }
-  const hourMatch = text.match(/\b([01]?\d|2[0-3])(?::[0-5]\d)?\s*(am|pm)?\b/);
-  if (hourMatch) {
-    let h24 = parseInt(hourMatch[1], 10);
-    const ampm = hourMatch[2];
+  // Colon time (20:00, 7:30pm) — requires the colon, so a bare digit
+  // elsewhere in the sentence (e.g. "day 2") can never be mistaken for a clock time.
+  const colonMatch = text.match(/\b([01]?\d|2[0-3]):([0-5]\d)\s*(am|pm)?\b/);
+  if (colonMatch) {
+    let h24 = parseInt(colonMatch[1], 10);
+    const ampm = colonMatch[3];
     if (ampm === 'pm' && h24 < 12) h24 += 12;
     if (ampm === 'am' && h24 === 12) h24 = 0;
     if (h24 >= 0 && h24 < 7) return { id: 'night', assumed: false };
     if (h24 >= 17) return { id: 'eve', assumed: false };
+    return { id: 'day', assumed: false };
+  }
+  // Bare am/pm time (7pm, 11 am) — requires am/pm, so a lone number is never mistaken for a time.
+  const ampmMatch = text.match(/\b([01]?\d|2[0-3])\s*(am|pm)\b/);
+  if (ampmMatch) {
+    let h24 = parseInt(ampmMatch[1], 10);
+    if (ampmMatch[2] === 'pm' && h24 < 12) h24 += 12;
+    if (ampmMatch[2] === 'am' && h24 === 12) h24 = 0;
+    if (h24 >= 0 && h24 < 7) return { id: 'night', assumed: false };
+    if (h24 >= 17) return { id: 'eve', assumed: false };
+    return { id: 'day', assumed: false };
   }
   return { id: 'day', assumed: true };
+}
+
+// If nothing else matches but a real code is mentioned directly in the
+// text (e.g. dictating "bill Z434 for this" or "is C602 right here"),
+// fall back to just looking that code up rather than giving up.
+function findDirectCodeMention(text) {
+  const match = text.toUpperCase().match(/\b[ACEGJKRZ]\d{3}[AB]?\b/);
+  if (!match) return null;
+  return codeInfo(match[0]) ? match[0] : null;
 }
 
 /**
@@ -44,7 +101,7 @@ function detectTimeBlock(text) {
  * Returns { code, catKey, rationale: string[], assumptions: string[], addOns: {code, why}[], timeBlock }
  */
 function parseSituation(rawText) {
-  const text = (rawText || '').toLowerCase();
+  const text = normalizeText(rawText);
   const rationale = [];
   const assumptions = [];
   const addOns = [];
@@ -54,38 +111,39 @@ function parseSituation(rawText) {
   }
 
   const timeBlock = detectTimeBlock(text);
-  const isViaEr = has(text, 'from er', 'in the er', 'emergency department', 'admit from er', 'admitting from er', 'er consult', 'ed consult', 'from ed', 'in the ed', ' ed ', 'ed admission', 'emerg consult');
-  const isViaWard = has(text, 'on the ward', 'ward admission', 'admitting on the ward', 'floor admission');
-  const isCallback = has(text, 'called in', 'called back', 'callback', 'call back', 'came in from home', 'paged and went in', 'paged in');
-  const isElectiveOrRounds = has(text, 'rounds', 'routine rounds', 'elective admission', 'scheduled admission');
-  const isReassess = has(text, 'reassess', 're-assess', 'reassessment', 're-assessment');
-  const isSecondPatient = has(text, '2nd patient', 'second patient', 'another patient', 'additional patient', 'other patient', '2nd person', 'second person');
-  const isCcuAcute = has(text, 'crashing', 'coding', 'life-threatening', 'life threatening', 'resuscitat', 'arrest', 'unstable and critical');
-  const isCcuPerDiem = has(text, 'ccu', 'icu', 'coronary care', 'critical care unit', 'cardiac icu');
-  const isPostIcuTransfer = has(text, 'transfer from icu', 'transferred from ccu', 'stepped down', 'transferred out of ccu', 'post-icu', 'post icu', 'out of ccu', 'out of icu');
-  const isCcuTransferIn = has(text, 'transfer to ccu', 'transferred to ccu', 'transfer to icu', 'transferred to icu', 'moved to ccu', 'moved to icu', 'admitted to ccu', 'admission to ccu', 'ccu admission', 'ccu transfer');
-  const isStemiPci = has(text, 'stemi', 'primary pci', 'pci', 'stent', 'angioplasty', 'cath lab', 'cardiac cath', 'coronary intervention');
-  const isDischarge = has(text, 'discharge');
-  const isDay1 = has(text, 'day 1', 'day one', 'first day', 'first hospital day');
-  const isDay2 = has(text, 'day 2', 'day two', 'second day');
-  const isDay3 = has(text, 'day 3', 'day three', 'third day');
-  const isNewAdmission = has(text, 'new admission', 'admitted', 'admission', 'admitting', 'new consult');
-  const isConsult = has(text, 'consult', 'consultation', 'referred', 'referral');
-  const isComprehensive = has(text, '75 min', '75-minute', 'comprehensive', 'over an hour');
-  const isOutpatientChf = has(text, 'outpatient', 'office', 'clinic follow-up', 'clinic followup') && has(text, 'chf', 'heart failure');
-  const isCardioversion = has(text, 'cardiovert', 'cardioversion');
-  const isCentralLine = has(text, 'central line');
-  const isArtLine = has(text, 'arterial line', 'art line', 'a-line');
-  const isAbg = has(text, 'abg', 'blood gas');
-  const isTvPacing = has(text, 'transvenous pac', 'tv pacing', 'temporary pacing');
-  const isSwan = has(text, 'swan', 'swan-ganz', 'pulmonary artery catheter');
+  const isViaEr = has(text, 'from er', 'in the er', 'in er', 'emergency department', 'emergency room', 'admit from er', 'admitting from er', 'er consult', 'ed consult', 'from ed', 'in the ed', 'in ed', ' ed ', 'ed admission', 'emerg consult', 'brought to the er', 'brought to emerg', 'sent from er', 'sent from emerg');
+  const isViaWard = has(text, 'on the ward', 'ward admission', 'admitting on the ward', 'floor admission', 'on the floor');
+  const isCallback = has(text, 'called in', 'called back', 'callback', 'call back', 'call-back', 'came in from home', 'paged and went in', 'paged in', 'got paged', 'beeper went off', 'got a page', 'phoned in', 'urgent call', 'off hours call', 'off-hours call', 'after hours call', 'stat call', 'emergency call', 'went in urgently', 'had to go back in', 'unscheduled visit');
+  const isElectiveOrRounds = has(text, 'rounds', 'routine rounds', 'elective admission', 'scheduled admission', 'daily rounds', 'morning rounds');
+  const isReassess = has(text, 'reassess', 're-assess', 'reassessment', 're-assessment', 'reassessed', 're-assessed', 'checked on again', 'saw again', 'went back to see', 'follow-up assessment', 'followup assessment', 'seen again for');
+  const isSecondPatient = /\b(2|two|second|2nd)\w*\s*(patient|person)\b/.test(text)
+    || has(text, 'another patient', 'additional patient', 'other patient', 'more than one patient', 'multiple patients', 'second one', 'next patient same trip', 'other person', 'additional person');
+  const isCcuAcute = has(text, 'crashing', 'crashed', 'coding', 'went into arrest', 'life-threatening', 'life threatening', 'resuscitat', 'arrest', 'unstable and critical', 'needed resuscitation', 'coded');
+  const isCcuPerDiem = has(text, 'ccu', 'icu', 'coronary care', 'critical care unit', 'cardiac icu', 'intensive care', 'coronary care unit');
+  const isPostIcuTransfer = has(text, 'transfer from icu', 'transferred from ccu', 'stepped down', 'stepped-down', 'transferred out of ccu', 'post-icu', 'post icu', 'out of ccu', 'out of icu', 'came out of ccu', 'came out of icu', 'left the ccu', 'left the icu');
+  const isCcuTransferIn = has(text, 'transfer to ccu', 'transferred to ccu', 'transfer to icu', 'transferred to icu', 'moved to ccu', 'moved to icu', 'admitted to ccu', 'admission to ccu', 'ccu admission', 'ccu transfer', 'sent to ccu', 'sent to icu', 'upgraded to ccu', 'upgraded to icu', 'needed ccu', 'needed icu');
+  const isStemiPci = has(text, 'stemi', 'primary pci', 'pci', 'stent', 'angioplasty', 'cath lab', 'cardiac cath', 'coronary intervention', 'heart attack', 'balloon and stent', 'opened the artery', 'clot in the artery', 'coronary stenting', 'cardiac catheterization', 'diagnostic cath');
+  const isDischarge = has(text, 'discharge', 'discharged', 'sending home', 'going home today', 'd/c', 'sent home');
+  const isDay1 = has(text, 'day 1', '1st day', 'day one', 'first day', '1st hospital day', 'first hospital day', 'day after admission', 'day following admission');
+  const isDay2 = has(text, 'day 2', '2nd day', 'day two', 'second day', 'two days after admission');
+  const isDay3 = has(text, 'day 3', '3rd day', 'day three', 'third day', 'three days after admission');
+  const isNewAdmission = has(text, 'new admission', 'admitted', 'admission', 'admitting', 'new consult', 'admit the patient', 'admitting the patient', 'took over as mrp', 'became mrp', 'brought in and admitted');
+  const isConsult = has(text, 'consult', 'consultation', 'referred', 'referral', 'asked to see', 'requested a consult', 'seen in consultation');
+  const isComprehensive = has(text, '75 min', '75-minute', '75 minute', 'comprehensive', 'over an hour', 'more than an hour', 'lengthy visit');
+  const isOutpatientChf = has(text, 'outpatient', 'office', 'clinic follow-up', 'clinic followup', 'clinic visit') && has(text, 'chf', 'heart failure');
+  const isCardioversion = has(text, 'cardiovert', 'cardioversion', 'shocked the patient', 'electrical cardioversion');
+  const isCentralLine = has(text, 'central line', 'central venous line', 'cvc');
+  const isArtLine = has(text, 'arterial line', 'art line', 'a-line', 'a line');
+  const isAbg = has(text, 'abg', 'blood gas', 'arterial puncture', 'arterial blood gas');
+  const isTvPacing = has(text, 'transvenous pac', 'tv pacing', 'temporary pacing', 'temporary pacemaker', 'temp pacer', 'temp pacing wire');
+  const isSwan = has(text, 'swan', 'swan-ganz', 'swan ganz', 'pulmonary artery catheter');
   const isPericardiocentesis = has(text, 'pericardiocentesis');
   const isThoracocentesis = has(text, 'thoracocentesis');
   const isCounselling = has(text, 'counselling', 'counseling', 'family meeting');
-  const isTelephoneAdvice = has(text, 'telephone advice', 'phone advice', 'phoned in advice');
+  const isTelephoneAdvice = has(text, 'telephone advice', 'phone advice', 'phoned in advice', 'gave advice over the phone', 'called with advice');
   const isEconsult = has(text, 'e-consult', 'econsult', 'fax consult', 'email consult');
   const isDrivingForm = has(text, 'driving form', 'medical form', 'fitness to drive');
-  const isDeathCert = has(text, 'death certificate', 'pronounced death', 'patient died');
+  const isDeathCert = has(text, 'death certificate', 'pronounced death', 'patient died', 'pronounced the patient', 'time of death');
 
   let code = null;
   let catKey = null;
@@ -244,7 +302,27 @@ function parseSituation(rawText) {
   }
 
   if (!code) {
-    return { code: null, catKey: null, rationale: [], assumptions: ['Couldn\'t confidently match this description — try adding more detail (setting, day of admission, procedure, time of day).'], addOns: [] };
+    const direct = findDirectCodeMention(text);
+    if (direct) {
+      const info = codeInfo(direct);
+      return {
+        code: direct,
+        catKey: info ? info.cat : null,
+        rationale: [`Matched ${direct} mentioned directly in your description.`],
+        assumptions: [],
+        addOns: [],
+        timeBlock,
+      };
+    }
+    return {
+      code: null,
+      catKey: null,
+      rationale: [],
+      assumptions: [
+        'Couldn\'t confidently match this description. Try mentioning: what kind of encounter (admission, callback, reassessment, procedure), the setting (ward/CCU/ER), the day of admission or discharge, and the time of day — or just say the code itself if you already know it.',
+      ],
+      addOns: [],
+    };
   }
 
   return { code, catKey, rationale, assumptions, addOns, timeBlock };
