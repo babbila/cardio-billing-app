@@ -3,7 +3,7 @@
 // Rules/combos/workflow: user-supplied institutional billing-rules cheat sheets.
 // Personal reference only — verify against the current Schedule before billing.
 
-export const CATS = [
+const CATS = [
   { key: 'consults', label: 'Consults' },
   { key: 'mrp', label: 'MRP / Subsequent' },
   { key: 'ccu', label: 'CCU / Critical' },
@@ -12,7 +12,7 @@ export const CATS = [
   { key: 'misc', label: 'Misc / Admin' },
 ];
 
-export const CODES = [
+const CODES = [
   // ---- Consults ----
   { code: 'A605 / C605', cat: 'consults', label: 'Consultation', fee: '$188.45',
     notes: 'A-prefix = ER/office or when a premium applies. C-prefix = simple weekday ward admission, no premium.' },
@@ -201,14 +201,14 @@ export const CODES = [
 // Codes capped at one encounter per patient per day — a same-day repeat
 // swaps to the "additional encounter" alternative. (C603/C604 are actually
 // capped per-admission, not just per-day — flagged separately in the app.)
-export const DAILY_LIMIT_CODES = ['C602', 'C607', 'C609', 'C121', 'C603', 'C604'];
-export const DAILY_LIMIT_ALT = 'C608';
-export const PER_ADMISSION_CODES = ['C603', 'C604'];
+const DAILY_LIMIT_CODES = ['C602', 'C607', 'C609', 'C121', 'C603', 'C604'];
+const DAILY_LIMIT_ALT = 'C608';
+const PER_ADMISSION_CODES = ['C603', 'C604'];
 
 // SVP "first person seen" / "additional person(s) seen" pairs by time-of-day
 // block, for both the inpatient (C-prefix) and ER/ward-admission (K-prefix)
 // contexts.
-export const SVP_TIME_BLOCKS = [
+const SVP_TIME_BLOCKS = [
   { id: 'day', label: 'weekday day (07:00–17:00)', first: 'C990', additional: 'C991' },
   { id: 'eve', label: 'weekday evening (17:00–24:00)', first: 'C994', additional: 'C995' },
   { id: 'weekend', label: 'Sat/Sun/Holiday', first: 'C986', additional: 'C987' },
@@ -216,12 +216,12 @@ export const SVP_TIME_BLOCKS = [
 ];
 
 // K-prefix equivalents used when admitting from ER / on the ward with a premium.
-export const K_PREFIX_ADDITIONAL = {
+const K_PREFIX_ADDITIONAL = {
   K990: 'K991',
   K994: 'K995',
   K998: 'K999',
   K996: 'K997',
 };
 
-export const DISCLAIMER =
+const DISCLAIMER =
   'Personal reference only — always verify current codes, fees, and rules against the OHIP Schedule of Benefits before billing.';

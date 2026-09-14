@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cardio-billing-v2';
+const CACHE_NAME = 'cardio-billing-v3';
 const ASSETS = [
   './',
   './index.html',

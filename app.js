@@ -1,6 +1,5 @@
-import { CATS, CODES, DISCLAIMER } from './data.js';
-import { buildAskResult } from './parse.js';
-import { addFile, listByCategory, countsByCategory, getFile, deleteFile } from './idb.js';
+// Globals from data.js, parse.js, idb.js (loaded first as plain scripts).
+const { addFile, listByCategory, countsByCategory, getFile, deleteFile } = CheatSheetDB;
 
 document.getElementById('disclaimer').textContent = DISCLAIMER;
 

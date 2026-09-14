@@ -1,5 +1,6 @@
 // Free-text/voice situation parsing ("Ask" mode) and same-day cross-checking.
-import { CODES, DAILY_LIMIT_CODES, DAILY_LIMIT_ALT, PER_ADMISSION_CODES, SVP_TIME_BLOCKS, K_PREFIX_ADDITIONAL } from './data.js';
+// Depends on globals from data.js (CODES, DAILY_LIMIT_CODES, DAILY_LIMIT_ALT,
+// PER_ADMISSION_CODES, SVP_TIME_BLOCKS, K_PREFIX_ADDITIONAL) — load data.js first.
 
 function codeInfo(code) {
   return CODES.find((c) => c.code.split(' / ').some((part) => part === code));
@@ -19,6 +20,13 @@ function detectTimeBlock(text) {
   if (has(text, 'evening', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', 'after clinic', 'after hours', 'after-hours')) {
     return { id: 'eve', assumed: false };
   }
+  const militaryMatch = text.match(/\b([01]\d|2[0-3])([0-5]\d)\b/);
+  if (militaryMatch) {
+    const h24 = parseInt(militaryMatch[1], 10);
+    if (h24 >= 0 && h24 < 7) return { id: 'night', assumed: false };
+    if (h24 >= 17) return { id: 'eve', assumed: false };
+    return { id: 'day', assumed: false };
+  }
   const hourMatch = text.match(/\b([01]?\d|2[0-3])(?::[0-5]\d)?\s*(am|pm)?\b/);
   if (hourMatch) {
     let h24 = parseInt(hourMatch[1], 10);
@@ -35,7 +43,7 @@ function detectTimeBlock(text) {
  * Heuristic keyword parse of a free-text billing situation.
  * Returns { code, catKey, rationale: string[], assumptions: string[], addOns: {code, why}[], timeBlock }
  */
-export function parseSituation(rawText) {
+function parseSituation(rawText) {
   const text = (rawText || '').toLowerCase();
   const rationale = [];
   const assumptions = [];
@@ -48,8 +56,10 @@ export function parseSituation(rawText) {
   const timeBlock = detectTimeBlock(text);
   const isViaEr = has(text, 'from er', 'in the er', 'emergency department', 'admit from er', 'admitting from er', 'er consult', 'ed consult', 'from ed', 'in the ed', ' ed ', 'ed admission', 'emerg consult');
   const isViaWard = has(text, 'on the ward', 'ward admission', 'admitting on the ward', 'floor admission');
-  const isCallback = has(text, 'called in', 'callback', 'call back', 'came in from home', 'paged and went in');
+  const isCallback = has(text, 'called in', 'called back', 'callback', 'call back', 'came in from home', 'paged and went in', 'paged in');
   const isElectiveOrRounds = has(text, 'rounds', 'routine rounds', 'elective admission', 'scheduled admission');
+  const isReassess = has(text, 'reassess', 're-assess', 'reassessment', 're-assessment');
+  const isSecondPatient = has(text, '2nd patient', 'second patient', 'another patient', 'additional patient', 'other patient', '2nd person', 'second person');
   const isCcuAcute = has(text, 'crashing', 'coding', 'life-threatening', 'life threatening', 'resuscitat', 'arrest', 'unstable and critical');
   const isCcuPerDiem = has(text, 'ccu', 'icu', 'coronary care', 'critical care unit', 'cardiac icu');
   const isPostIcuTransfer = has(text, 'transfer from icu', 'transferred from ccu', 'stepped down', 'transferred out of ccu', 'post-icu', 'post icu', 'out of ccu', 'out of icu');
@@ -155,6 +165,20 @@ export function parseSituation(rawText) {
     rationale.push('Discharge day described → C124, assuming admission spanned ≥48h and a discharge summary is completed within 48h.');
     addOns.push({ code: 'E083/E084', why: 'MRP discharge-day premium (E084 if weekend/holiday)' });
     assumptions.push('If the admission was under 48h, C124 isn\'t payable — bill C122 for that day instead (same fee).');
+  } else if (isCallback && isReassess) {
+    code = 'A604'; catKey = 'consults';
+    rationale.push('Called back to reassess an existing patient (not routine rounding) → general re-assessment (A604) with an A-prefix, paired with the matching SVP premium rather than E083/E084 — E083/E084 is specifically the rounding premium, not a callback premium.');
+    const block = SVP_TIME_BLOCKS.find((b) => b.id === timeBlock.id) || SVP_TIME_BLOCKS[0];
+    const svpCode = isSecondPatient ? block.additional : block.first;
+    addOns.push({
+      code: svpCode,
+      why: isSecondPatient
+        ? `special visit premium for ${block.label} — additional person, since this was the 2nd+ patient seen this callback trip`
+        : `special visit premium for ${block.label} — first person seen this callback; use ${block.additional} instead for any further patients seen the same trip`,
+    });
+    if (timeBlock.assumed) {
+      assumptions.push('Couldn\'t confirm time of day from the description — assumed weekday daytime; adjust the premium if this was evening/night/weekend.');
+    }
   } else if (isNewAdmission && !isDay2 && !isDay3) {
     const needsPremium = isViaEr || timeBlock.id !== 'day' || isCallback;
     if (isComprehensive) {
@@ -190,6 +214,9 @@ export function parseSituation(rawText) {
     code = 'A604/C604'; catKey = 'consults';
     rationale.push('Outpatient/office re-assessment with established CHF diagnosis → base assessment + E088 CHF premium.');
     addOns.push({ code: 'E088', why: 'established CHF diagnosis, office/outpatient setting (+50%)' });
+  } else if (isReassess) {
+    code = 'A601/A604'; catKey = 'consults';
+    rationale.push('Re-assessment described → A604 (general) or A601 (complex) depending on documented complexity.');
   } else if (isConsult) {
     if (isComprehensive) {
       code = 'A600/C600'; catKey = 'consults';
@@ -230,7 +257,7 @@ function normalizeCodeList(raw) {
  * Applies the optional same-day cross-check against a recommended code.
  * Returns { finalCode, swapped: bool, swapNote: string|null }
  */
-export function crossCheckSameDay(recommendedCode, alreadyBilledRaw) {
+function crossCheckSameDay(recommendedCode, alreadyBilledRaw) {
   const alreadyBilled = normalizeCodeList(alreadyBilledRaw);
   if (!recommendedCode || alreadyBilled.length === 0) {
     return { finalCode: recommendedCode, swapped: false, swapNote: null };
@@ -276,7 +303,7 @@ export function crossCheckSameDay(recommendedCode, alreadyBilledRaw) {
  * Combines parseSituation() output with the optional same-day check into a
  * render-ready result.
  */
-export function buildAskResult(situationText, alreadyBilledText) {
+function buildAskResult(situationText, alreadyBilledText) {
   const parsed = parseSituation(situationText);
   if (!parsed.code) {
     return parsed;
