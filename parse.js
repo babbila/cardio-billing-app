@@ -46,13 +46,14 @@ export function parseSituation(rawText) {
   }
 
   const timeBlock = detectTimeBlock(text);
-  const isViaEr = has(text, 'from er', 'in the er', 'emergency department', 'admit from er', 'admitting from er', 'er consult');
+  const isViaEr = has(text, 'from er', 'in the er', 'emergency department', 'admit from er', 'admitting from er', 'er consult', 'ed consult', 'from ed', 'in the ed', ' ed ', 'ed admission', 'emerg consult');
   const isViaWard = has(text, 'on the ward', 'ward admission', 'admitting on the ward', 'floor admission');
   const isCallback = has(text, 'called in', 'callback', 'call back', 'came in from home', 'paged and went in');
   const isElectiveOrRounds = has(text, 'rounds', 'routine rounds', 'elective admission', 'scheduled admission');
   const isCcuAcute = has(text, 'crashing', 'coding', 'life-threatening', 'life threatening', 'resuscitat', 'arrest', 'unstable and critical');
   const isCcuPerDiem = has(text, 'ccu', 'icu', 'coronary care', 'critical care unit', 'cardiac icu');
   const isPostIcuTransfer = has(text, 'transfer from icu', 'transferred from ccu', 'stepped down', 'transferred out of ccu', 'post-icu', 'post icu', 'out of ccu', 'out of icu');
+  const isCcuTransferIn = has(text, 'transfer to ccu', 'transferred to ccu', 'transfer to icu', 'transferred to icu', 'moved to ccu', 'moved to icu', 'admitted to ccu', 'admission to ccu', 'ccu admission', 'ccu transfer');
   const isStemiPci = has(text, 'stemi', 'primary pci', 'pci', 'stent', 'angioplasty', 'cath lab', 'cardiac cath', 'coronary intervention');
   const isDischarge = has(text, 'discharge');
   const isDay1 = has(text, 'day 1', 'day one', 'first day', 'first hospital day');
@@ -128,6 +129,10 @@ export function parseSituation(rawText) {
       addOns.push({ code: 'E409/E410', why: 'after-hours procedure premium if non-elective and outside daytime hours — applies to G262/G298; Z434 itself is a grey area, confirm with billing office' });
     }
     assumptions.push('Assumed this was a coronary (not structural/EP) procedure based on the wording used.');
+  } else if (isCcuTransferIn) {
+    code = 'G400'; catKey = 'ccu';
+    rationale.push('Ward patient assessed and transferred into Cardiac CCU the same day → that day is CCU day 1, so G400 (not the routine ward subsequent visit) — only one service is generally billable per day, and G400 reflects the higher level of care.');
+    assumptions.push('Confirm whether C101 (Cardiac CCU premium) stacks with G400 itself — the sources this app is built from confirm C101 pairs with admission/C122/C123/MRP visits/discharge, but don\'t explicitly list G400.');
   } else if (isPostIcuTransfer) {
     code = isDay2 ? 'C143' : 'C142';
     catKey = 'mrp';
