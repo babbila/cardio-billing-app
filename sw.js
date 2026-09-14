@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cardio-billing-v4';
+const CACHE_NAME = 'cardio-billing-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -25,20 +25,21 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Network-first for our own app files, so an online device always gets the
+// latest deploy instead of a stale cached copy — falls back to the cache
+// only when offline. This also means updates no longer depend on
+// remembering to bump CACHE_NAME on every change.
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
-          if (response.ok && response.type === 'basic') {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached);
-    })
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok && response.type === 'basic') {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
