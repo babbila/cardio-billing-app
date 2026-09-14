@@ -165,9 +165,13 @@ function parseSituation(rawText) {
     rationale.push('Discharge day described → C124, assuming admission spanned ≥48h and a discharge summary is completed within 48h.');
     addOns.push({ code: 'E083/E084', why: 'MRP discharge-day premium (E084 if weekend/holiday)' });
     assumptions.push('If the admission was under 48h, C124 isn\'t payable — bill C122 for that day instead (same fee).');
-  } else if (isCallback && isReassess) {
+  } else if (isCallback && !isNewAdmission) {
     code = 'A604'; catKey = 'consults';
-    rationale.push('Called back to reassess an existing patient (not routine rounding) → general re-assessment (A604), or A601 if it was a genuinely complex/lengthy reassessment. The A-prefix code reflects what was actually done, not the time of day — only the premium (below) changes with time of day.');
+    if (isReassess) {
+      rationale.push('Called back to reassess an existing patient (not routine rounding) → general re-assessment (A604), or A601 if it was a genuinely complex/lengthy reassessment. The A-prefix code reflects what was actually done, not the time of day — only the premium (below) changes with time of day.');
+    } else {
+      rationale.push('Callback to see an existing patient (not routine rounding) → defaulting to general re-assessment (A604) as a starting point. The actual A-code depends on what was done — A605 if this was really a fresh consult, A603 for a specific assessment, A601 if complex, A608 if brief/partial — check Browse if none of those fit. Either way, the A-prefix pattern applies (not a routine C-prefix code), and only the premium below changes with time of day.');
+    }
     const block = SVP_TIME_BLOCKS.find((b) => b.id === timeBlock.id) || SVP_TIME_BLOCKS[0];
     const svpCode = isSecondPatient ? block.additional : block.first;
     addOns.push({
