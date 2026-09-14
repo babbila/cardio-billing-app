@@ -167,7 +167,7 @@ function parseSituation(rawText) {
     assumptions.push('If the admission was under 48h, C124 isn\'t payable — bill C122 for that day instead (same fee).');
   } else if (isCallback && isReassess) {
     code = 'A604'; catKey = 'consults';
-    rationale.push('Called back to reassess an existing patient (not routine rounding) → general re-assessment (A604) with an A-prefix, paired with the matching SVP premium rather than E083/E084 — E083/E084 is specifically the rounding premium, not a callback premium.');
+    rationale.push('Called back to reassess an existing patient (not routine rounding) → general re-assessment (A604), or A601 if it was a genuinely complex/lengthy reassessment. The A-prefix code reflects what was actually done, not the time of day — only the premium (below) changes with time of day.');
     const block = SVP_TIME_BLOCKS.find((b) => b.id === timeBlock.id) || SVP_TIME_BLOCKS[0];
     const svpCode = isSecondPatient ? block.additional : block.first;
     addOns.push({
